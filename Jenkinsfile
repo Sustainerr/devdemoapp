@@ -8,7 +8,7 @@ pipeline {
     APP_NAME = 'demoapp'
     PORT     = '8081'
     GITHUB_REPO = 'Sustainerr/devdemoapp'      // owner/repo
-    GITHUB_TOKEN = credentials('wow')          // your GitHub token credential
+    GITHUB_TOKEN = credentials('jenkin')          // your GitHub token credential
   }
 
   stages {
