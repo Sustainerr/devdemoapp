@@ -1,12 +1,8 @@
 pipeline {
   agent any
-
   options { skipStagesAfterUnstable() }
 
-  tools {
-    // Configure this tool name in Jenkins: Manage Jenkins → Global Tool Configuration → Maven installations
-    maven 'Maven3'
-  }
+  tools { maven 'Maven3' }   // must match your Jenkins tool name
 
   environment {
     APP_NAME = 'demoapp'
@@ -15,7 +11,10 @@ pipeline {
 
   stages {
     stage('Checkout') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+        echo "Building branch: ${env.BRANCH_NAME}"
+      }
     }
 
     stage('Compile') {
@@ -25,17 +24,12 @@ pipeline {
     }
 
     stage('Test') {
-      steps {
-        sh 'mvn -B test'
-      }
-      post {
-        always {
-          junit 'target/surefire-reports/*.xml'
-        }
-      }
+      steps { sh 'mvn -B test' }
+      post { always { junit 'target/surefire-reports/*.xml' } }
     }
 
     stage('Package') {
+      when { branch 'main' }     // only on main
       steps {
         sh 'mvn -B -DskipTests package'
         archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
@@ -43,12 +37,12 @@ pipeline {
     }
 
     stage('Docker Build') {
-      steps {
-        sh 'docker build -t $APP_NAME:latest .'
-      }
+      when { branch 'main' }     // only on main
+      steps { sh 'docker build -t $APP_NAME:latest .' }
     }
 
     stage('Docker Run') {
+      when { branch 'main' }     // only on main
       steps {
         sh 'docker rm -f $APP_NAME || true'
         sh 'docker run -d --name $APP_NAME -p $PORT:$PORT $APP_NAME:latest'
@@ -62,3 +56,4 @@ pipeline {
     }
   }
 }
+
