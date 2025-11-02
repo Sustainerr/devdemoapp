@@ -2,11 +2,13 @@ pipeline {
   agent any
   options { skipStagesAfterUnstable() }
 
-  tools { maven 'Maven3' }   // must match your Jenkins tool name
+  tools { maven 'Maven3' }
 
   environment {
     APP_NAME = 'demoapp'
     PORT     = '8081'
+    GITHUB_REPO = 'Sustainerr/devdemoapp'      // owner/repo
+    GITHUB_TOKEN = credentials('wow')          // your GitHub token credential
   }
 
   stages {
@@ -14,6 +16,18 @@ pipeline {
       steps {
         checkout scm
         echo "Building branch: ${env.BRANCH_NAME}"
+
+        script {
+          // Set GitHub commit status: PENDING
+          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          sh """
+            curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+              -d '{"state":"pending","context":"jenkins/build","description":"Build started"}'
+          """
+        }
       }
     }
 
@@ -29,7 +43,7 @@ pipeline {
     }
 
     stage('Package') {
-      when { branch 'main' }     // only on main
+      when { branch 'main' }
       steps {
         sh 'mvn -B -DskipTests package'
         archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
@@ -37,12 +51,12 @@ pipeline {
     }
 
     stage('Docker Build') {
-      when { branch 'main' }     // only on main
+      when { branch 'main' }
       steps { sh 'docker build -t $APP_NAME:latest .' }
     }
 
     stage('Docker Run') {
-      when { branch 'main' }     // only on main
+      when { branch 'main' }
       steps {
         sh 'docker rm -f $APP_NAME || true'
         sh 'docker run -d --name $APP_NAME -p $PORT:$PORT $APP_NAME:latest'
@@ -51,6 +65,30 @@ pipeline {
   }
 
   post {
+    success {
+      script {
+        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+        sh """
+          curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+            -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
+        """
+      }
+    }
+    failure {
+      script {
+        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+        sh """
+          curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+            -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
+        """
+      }
+    }
     always {
       sh 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}" || true'
     }
