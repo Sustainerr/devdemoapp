@@ -5,11 +5,11 @@ pipeline {
   tools { maven 'Maven3' }
 
   environment {
-    APP_NAME     = 'demoapp'
-    PORT         = '8081'
-    GITHUB_REPO  = 'Sustainerr/devdemoapp'      // owner/repo
-    GITHUB_TOKEN = credentials('jenkin')        // your GitHub token credential
-    SONARQUBE    = credentials('sonar')         // your SonarQube token credential (ID = sonar)
+    APP_NAME = 'demoapp'
+    PORT     = '8081'
+    GITHUB_REPO = 'Sustainerr/devdemoapp'
+    GITHUB_TOKEN = credentials('jenkin')
+    SONARQUBE = credentials('sonar')
   }
 
   stages {
@@ -19,7 +19,6 @@ pipeline {
         echo "Building branch: ${env.BRANCH_NAME}"
 
         script {
-          // Set GitHub commit status: PENDING
           def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
           sh """
             curl -s -X POST \
@@ -43,10 +42,9 @@ pipeline {
       post { always { junit 'target/surefire-reports/*.xml' } }
     }
 
-    // 🔹 SonarQube Static Analysis
     stage('SAST - SonarQube Analysis') {
       steps {
-        withSonarQubeEnv('sonar') {    // Use your configured server name here
+        withSonarQubeEnv('SonarQube') {
           sh '''
             mvn clean verify sonar:sonar \
               -Dsonar.projectKey=devdemoapp \
@@ -57,7 +55,6 @@ pipeline {
       }
     }
 
-    // 🔹 Optional Quality Gate Check
     stage('Quality Gate') {
       steps {
         script {
@@ -93,41 +90,35 @@ pipeline {
     }
   }
 
-  // 🔹 Fixed post section — all sh commands now run inside node context
   post {
     success {
-      node {
-        script {
-          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-          sh """
-            curl -s -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
-              -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
-          """
-        }
+      script {
+        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+        sh """
+          curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+            -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
+        """
       }
     }
     failure {
-      node {
-        script {
-          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-          sh """
-            curl -s -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
-              -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
-          """
-        }
+      script {
+        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+        sh """
+          curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+            -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
+        """
       }
     }
     always {
-      node {
+      script {
         sh 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}" || true'
       }
     }
   }
 }
-
