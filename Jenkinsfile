@@ -8,7 +8,6 @@ pipeline {
     APP_NAME     = 'demoapp'
     PORT         = '8081'
     GITHUB_REPO  = 'Sustainerr/devdemoapp'
-    COMMIT_SHA   = ''
   }
 
   stages {
@@ -18,19 +17,22 @@ pipeline {
         echo "Building branch: ${env.BRANCH_NAME}"
 
         script {
-          // Save commit SHA for post actions
-          env.COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          // Get the commit SHA for GitHub status updates
+          def COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
 
-          // Notify GitHub: build started
+          // Notify GitHub that build started
           withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
             sh """
               curl -s -X POST \
                 -H "Authorization: token ${GITHUB_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+                https://api.github.com/repos/${GITHUB_REPO}/statuses/${COMMIT_SHA} \
                 -d '{"state":"pending","context":"jenkins/build","description":"Build started"}'
             """
           }
+
+          // Save commit SHA for later stages
+          writeFile file: 'commit.txt', text: COMMIT_SHA
         }
       }
     }
@@ -57,7 +59,7 @@ pipeline {
         withSonarQubeEnv('SonarQube') {
           withCredentials([string(credentialsId: 'Sonar', variable: 'SONARQUBE')]) {
             sh '''
-              mvn clean verify sonar:sonar \
+              mvn clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
                 -Dsonar.projectKey=devdemoapp \
                 -Dsonar.host.url=http://localhost:9000 \
                 -Dsonar.login=$SONARQUBE
@@ -73,7 +75,7 @@ pipeline {
           timeout(time: 3, unit: 'MINUTES') {
             def qg = waitForQualityGate()
             if (qg.status != 'OK') {
-              error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
+              error "❌ Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
             }
           }
         }
@@ -125,30 +127,35 @@ pipeline {
 
   post {
     success {
-      withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
-        script {
-          echo "✅ Build succeeded, notifying GitHub..."
+      script {
+        echo "✅ Build succeeded, notifying GitHub..."
+        def COMMIT_SHA = readFile('commit.txt').trim()
+
+        withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${COMMIT_SHA} \
               -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
           """
-          sh 'kubectl get pods -o wide || true'
         }
+
+        sh 'kubectl get pods -o wide || true'
       }
     }
 
     failure {
-      withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
-        script {
-          echo "❌ Build failed, notifying GitHub..."
+      script {
+        echo "❌ Build failed, notifying GitHub..."
+        def COMMIT_SHA = readFile('commit.txt').trim()
+
+        withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${COMMIT_SHA} \
               -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
           """
         }
