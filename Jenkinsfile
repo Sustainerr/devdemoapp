@@ -8,11 +8,6 @@ pipeline {
     APP_NAME     = 'demoapp'
     PORT         = '8081'
     GITHUB_REPO  = 'Sustainerr/devdemoapp'
-<<<<<<< HEAD
-=======
-    GITHUB_TOKEN = credentials('git')
-    COMMIT_SHA   = ''
->>>>>>> origin/main
   }
 
   stages {
@@ -22,7 +17,6 @@ pipeline {
         echo "Building branch: ${env.BRANCH_NAME}"
 
         script {
-<<<<<<< HEAD
           // Get the commit SHA for GitHub status updates
           def COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
 
@@ -39,19 +33,6 @@ pipeline {
 
           // Save commit SHA for later stages
           writeFile file: 'commit.txt', text: COMMIT_SHA
-=======
-          // Save commit SHA for post actions
-          env.COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-
-          // Notify GitHub: build started
-          sh """
-            curl -s -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
-              -d '{"state":"pending","context":"jenkins/build","description":"Build started"}'
-          """
->>>>>>> origin/main
         }
       }
     }
@@ -71,7 +52,6 @@ pipeline {
           junit 'target/surefire-reports/*.xml'
         }
       }
-<<<<<<< HEAD
     }
 
     stage('SAST - SonarQube Analysis') {
@@ -100,8 +80,6 @@ pipeline {
           }
         }
       }
-=======
->>>>>>> origin/main
     }
 
     stage('Package') {
@@ -123,15 +101,9 @@ pipeline {
       when { branch 'main' }
       steps {
         sh '''
-<<<<<<< HEAD
           echo "🚀 Deploying to Minikube..."
 
           # Make sure Docker commands target Minikube's internal daemon
-=======
-          echo "Deploying to Minikube..."
-
-          # Make sure Docker commands target Minikube’s internal daemon
->>>>>>> origin/main
           eval $(minikube -p minikube docker-env)
 
           # Build image directly inside Minikube Docker
@@ -144,17 +116,10 @@ pipeline {
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
 
-<<<<<<< HEAD
           echo "⏳ Waiting for rollout..."
           kubectl rollout status deployment/$APP_NAME --timeout=300s || true
 
           echo "✅ Deployment stage finished!"
-=======
-          echo " Waiting for rollout..."
-          kubectl rollout status deployment/$APP_NAME --timeout=300s || true
-
-          echo "Deployment stage finished!"
->>>>>>> origin/main
         '''
       }
     }
@@ -163,56 +128,34 @@ pipeline {
   post {
     success {
       script {
-<<<<<<< HEAD
         echo "✅ Build succeeded, notifying GitHub..."
         def COMMIT_SHA = readFile('commit.txt').trim()
 
         withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
-=======
-        node {
-          echo "Build succeeded, notifying GitHub..."
->>>>>>> origin/main
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-<<<<<<< HEAD
               https://api.github.com/repos/${GITHUB_REPO}/statuses/${COMMIT_SHA} \
               -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
           """
         }
 
         sh 'kubectl get pods -o wide || true'
-=======
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
-              -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
-          """
-          sh 'kubectl get pods -o wide || true'
-        }
->>>>>>> origin/main
       }
     }
 
     failure {
       script {
-<<<<<<< HEAD
         echo "❌ Build failed, notifying GitHub..."
         def COMMIT_SHA = readFile('commit.txt').trim()
 
         withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
-=======
-        node {
-          echo "❌ Build failed, notifying GitHub..."
->>>>>>> origin/main
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-<<<<<<< HEAD
               https://api.github.com/repos/${GITHUB_REPO}/statuses/${COMMIT_SHA} \
-=======
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
->>>>>>> origin/main
               -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
           """
         }
@@ -220,4 +163,3 @@ pipeline {
     }
   }
 }
-
