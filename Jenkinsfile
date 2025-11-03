@@ -7,8 +7,8 @@ pipeline {
   environment {
     APP_NAME = 'demoapp'
     PORT     = '8081'
-    GITHUB_REPO = 'Sustainerr/devdemoapp'      // owner/repo
-    GITHUB_TOKEN = credentials('jenkin')          // your GitHub token credential
+    GITHUB_REPO = 'Sustainerr/devdemoapp'
+    GITHUB_TOKEN = credentials('jenkin')
   }
 
   stages {
@@ -18,7 +18,6 @@ pipeline {
         echo "Building branch: ${env.BRANCH_NAME}"
 
         script {
-          // Set GitHub commit status: PENDING
           def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
           sh """
             curl -s -X POST \
@@ -55,11 +54,18 @@ pipeline {
       steps { sh 'docker build -t $APP_NAME:latest .' }
     }
 
-    stage('Docker Run') {
+    stage('Deploy to Minikube') {
       when { branch 'main' }
       steps {
-        sh 'docker rm -f $APP_NAME || true'
-        sh 'docker run -d --name $APP_NAME -p $PORT:$PORT $APP_NAME:latest'
+        sh '''
+          echo "🚀 Deploying to Minikube..."
+          eval $(minikube -p minikube docker-env)
+          docker build -t $APP_NAME:latest .
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl rollout status deployment/$APP_NAME --timeout=120s
+          echo "✅ Deployment successful!"
+        '''
       }
     }
   }
@@ -76,6 +82,7 @@ pipeline {
             -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
         """
       }
+      sh 'kubectl get pods -o wide || true'
     }
     failure {
       script {
@@ -88,9 +95,6 @@ pipeline {
             -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
         """
       }
-    }
-    always {
-      sh 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}" || true'
     }
   }
 }
