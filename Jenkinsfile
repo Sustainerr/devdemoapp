@@ -22,7 +22,7 @@ pipeline {
           env.COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
 
           // Notify GitHub: build started
-          withCredentials([string(credentialsId: 'jenkin', variable: 'GITHUB_TOKEN')]) {
+          withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
             sh """
               curl -s -X POST \
                 -H "Authorization: token ${GITHUB_TOKEN}" \
@@ -125,7 +125,7 @@ pipeline {
 
   post {
     success {
-      withCredentials([string(credentialsId: 'jenkin', variable: 'GITHUB_TOKEN')]) {
+      withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
         script {
           echo "✅ Build succeeded, notifying GitHub..."
           sh """
@@ -141,7 +141,7 @@ pipeline {
     }
 
     failure {
-      withCredentials([string(credentialsId: 'jenkin', variable: 'GITHUB_TOKEN')]) {
+      withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
         script {
           echo "❌ Build failed, notifying GitHub..."
           sh """
