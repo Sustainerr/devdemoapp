@@ -126,32 +126,28 @@ pipeline {
   post {
     success {
       script {
-        node {
-          echo "Build succeeded, notifying GitHub..."
-          sh """
-            curl -s -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
-              -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
-          """
-          sh 'kubectl get pods -o wide || true'
-        }
+        echo "Build succeeded, notifying GitHub..."
+        sh """
+          curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+            -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
+        """
+        sh 'kubectl get pods -o wide || true'
       }
     }
 
     failure {
       script {
-        node {
-          echo "❌ Build failed, notifying GitHub..."
-          sh """
-            curl -s -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
-              -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
-          """
-        }
+        echo "❌ Build failed, notifying GitHub..."
+        sh """
+          curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+            -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
+        """
       }
     }
   }
