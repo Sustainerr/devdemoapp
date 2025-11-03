@@ -8,7 +8,7 @@ pipeline {
     APP_NAME = 'demoapp'
     PORT     = '8081'
     GITHUB_REPO = 'Sustainerr/devdemoapp'
-    GITHUB_TOKEN = credentials('jenkin')
+    GITHUB_TOKEN = credentials('git') 
   }
 
   stages {
@@ -73,27 +73,33 @@ pipeline {
   post {
     success {
       script {
-        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-        sh """
-          curl -s -X POST \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
-            -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
-        """
+        node {
+          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          sh """
+            curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+              -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
+          """
+
+          // safe to run extra shell commands here too
+          sh 'kubectl get pods -o wide || true'
+        }
       }
-      sh 'kubectl get pods -o wide || true'
     }
     failure {
       script {
-        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-        sh """
-          curl -s -X POST \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
-            -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
-        """
+        node {
+          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          sh """
+            curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+              -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
+          """
+        }
       }
     }
   }
