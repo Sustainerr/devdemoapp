@@ -55,7 +55,7 @@ pipeline {
     stage('SAST - SonarQube Analysis') {
       steps {
         withSonarQubeEnv('SonarQube') {
-          withCredentials([string(credentialsId: 'sonar', variable: 'SONARQUBE')]) {
+          withCredentials([string(credentialsId: 'Sonar', variable: 'SONARQUBE')]) {
             sh '''
               mvn clean verify sonar:sonar \
                 -Dsonar.projectKey=devdemoapp \
