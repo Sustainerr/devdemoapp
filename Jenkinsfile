@@ -17,7 +17,11 @@ pipeline {
       steps {
         checkout scm
         echo "Building branch: ${env.BRANCH_NAME}"
+      }
+    }
 
+    stage('Set GitHub Status - Pending') {
+      steps {
         script {
           def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
           sh """
@@ -38,8 +42,14 @@ pipeline {
     }
 
     stage('Test') {
-      steps { sh 'mvn -B test' }
-      post { always { junit 'target/surefire-reports/*.xml' } }
+      steps { 
+        sh 'mvn -B test' 
+      }
+      post { 
+        always { 
+          junit 'target/surefire-reports/*.xml' 
+        } 
+      }
     }
 
     stage('SAST - SonarQube Analysis') {
@@ -78,7 +88,9 @@ pipeline {
 
     stage('Docker Build') {
       when { branch 'main' }
-      steps { sh 'docker build -t $APP_NAME:latest .' }
+      steps { 
+        sh 'docker build -t $APP_NAME:latest .' 
+      }
     }
 
     stage('Docker Run') {
@@ -91,34 +103,45 @@ pipeline {
   }
 
   post {
+    always {
+      script {
+        // Only run if we have a workspace context
+        if (currentBuild.rawBuild.getExecutor().getCurrentWorkspace() != null) {
+          sh 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}" || true'
+        }
+      }
+    }
     success {
       script {
-        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-        sh """
-          curl -s -X POST \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
-            -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
-        """
+        updateGitHubStatus('success', 'Build passed')
       }
     }
     failure {
       script {
-        def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-        sh """
-          curl -s -X POST \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
-            -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
-        """
+        updateGitHubStatus('failure', 'Build failed')
       }
     }
-    always {
+    aborted {
       script {
-        sh 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}" || true'
+        updateGitHubStatus('error', 'Build aborted')
       }
     }
+  }
+}
+
+// Define function to update GitHub status
+def updateGitHubStatus(String state, String description) {
+  try {
+    // Get the SHA in a way that doesn't require workspace
+    def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+    sh """
+      curl -s -X POST \
+        -H "Authorization: token ${env.GITHUB_TOKEN}" \
+        -H "Accept: application/vnd.github+json" \
+        https://api.github.com/repos/${env.GITHUB_REPO}/statuses/${sha} \
+        -d '{"state":"${state}","context":"jenkins/build","description":"${description}"}'
+    """
+  } catch (Exception e) {
+    echo "Failed to update GitHub status: ${e.message}"
   }
 }
