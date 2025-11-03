@@ -58,13 +58,13 @@ pipeline {
       when { branch 'main' }
       steps {
         sh '''
-          echo "🚀 Deploying to Minikube..."
+          echo "Deploying to Minikube..."
           eval $(minikube -p minikube docker-env)
           docker build -t $APP_NAME:latest .
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
           kubectl rollout status deployment/$APP_NAME --timeout=120s
-          echo "✅ Deployment successful!"
+          echo "Deployment successful!"
         '''
       }
     }
