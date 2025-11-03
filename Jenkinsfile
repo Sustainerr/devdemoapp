@@ -5,10 +5,11 @@ pipeline {
   tools { maven 'Maven3' }
 
   environment {
-    APP_NAME = 'demoapp'
-    PORT     = '8081'
-    GITHUB_REPO = 'Sustainerr/devdemoapp'
-    GITHUB_TOKEN = credentials('git') 
+    APP_NAME     = 'demoapp'
+    PORT         = '8081'
+    GITHUB_REPO  = 'Sustainerr/devdemoapp'
+    GITHUB_TOKEN = credentials('git')
+    COMMIT_SHA   = ''
   }
 
   stages {
@@ -18,12 +19,15 @@ pipeline {
         echo "Building branch: ${env.BRANCH_NAME}"
 
         script {
-          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          // Save commit SHA for post actions
+          env.COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+
+          // Notify GitHub: build started
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
               -d '{"state":"pending","context":"jenkins/build","description":"Build started"}'
           """
         }
@@ -37,8 +41,14 @@ pipeline {
     }
 
     stage('Test') {
-      steps { sh 'mvn -B test' }
-      post { always { junit 'target/surefire-reports/*.xml' } }
+      steps {
+        sh 'mvn -B test'
+      }
+      post {
+        always {
+          junit 'target/surefire-reports/*.xml'
+        }
+      }
     }
 
     stage('Package') {
@@ -51,7 +61,9 @@ pipeline {
 
     stage('Docker Build') {
       when { branch 'main' }
-      steps { sh 'docker build -t $APP_NAME:latest .' }
+      steps {
+        sh 'docker build -t $APP_NAME:latest .'
+      }
     }
 
     stage('Deploy to Minikube') {
@@ -59,12 +71,24 @@ pipeline {
       steps {
         sh '''
           echo "Deploying to Minikube..."
+
+          # Make sure Docker commands target Minikube’s internal daemon
           eval $(minikube -p minikube docker-env)
+
+          # Build image directly inside Minikube Docker
           docker build -t $APP_NAME:latest .
+
+          # Optionally load image cache (useful for remote Jenkins)
+          minikube image load $APP_NAME:latest
+
+          # Apply manifests
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
-          kubectl rollout status deployment/$APP_NAME --timeout=120s
-          echo "Deployment successful!"
+
+          echo " Waiting for rollout..."
+          kubectl rollout status deployment/$APP_NAME --timeout=300s || true
+
+          echo "Deployment stage finished!"
         '''
       }
     }
@@ -74,29 +98,28 @@ pipeline {
     success {
       script {
         node {
-          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          echo "Build succeeded, notifying GitHub..."
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
               -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
           """
-
-          // safe to run extra shell commands here too
           sh 'kubectl get pods -o wide || true'
         }
       }
     }
+
     failure {
       script {
         node {
-          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          echo "❌ Build failed, notifying GitHub..."
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
               -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
           """
         }
