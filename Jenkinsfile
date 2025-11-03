@@ -8,8 +8,6 @@ pipeline {
     APP_NAME     = 'demoapp'
     PORT         = '8081'
     GITHUB_REPO  = 'Sustainerr/devdemoapp'
-    GITHUB_TOKEN = credentials('git')
-    SONARQUBE = credentials('sonar')
     COMMIT_SHA   = ''
   }
 
@@ -24,13 +22,15 @@ pipeline {
           env.COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
 
           // Notify GitHub: build started
-          sh """
-            curl -s -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
-              -d '{"state":"pending","context":"jenkins/build","description":"Build started"}'
-          """
+          withCredentials([string(credentialsId: 'jenkin', variable: 'GITHUB_TOKEN')]) {
+            sh """
+              curl -s -X POST \
+                -H "Authorization: token ${GITHUB_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+                -d '{"state":"pending","context":"jenkins/build","description":"Build started"}'
+            """
+          }
         }
       }
     }
@@ -52,21 +52,21 @@ pipeline {
       }
     }
 
-    // 🔹 ADDED: SonarQube Analysis Stage
     stage('SAST - SonarQube Analysis') {
       steps {
         withSonarQubeEnv('SonarQube') {
-          sh '''
-            mvn clean verify sonar:sonar \
-              -Dsonar.projectKey=devdemoapp \
-              -Dsonar.host.url=http://localhost:9000 \
-              -Dsonar.login=$SONARQUBE
-          '''
+          withCredentials([string(credentialsId: 'sonar', variable: 'SONARQUBE')]) {
+            sh '''
+              mvn clean verify sonar:sonar \
+                -Dsonar.projectKey=devdemoapp \
+                -Dsonar.host.url=http://localhost:9000 \
+                -Dsonar.login=$SONARQUBE
+            '''
+          }
         }
       }
     }
 
-    // 🔹 ADDED: Quality Gate Check
     stage('Quality Gate') {
       steps {
         script {
@@ -99,7 +99,7 @@ pipeline {
       when { branch 'main' }
       steps {
         sh '''
-          echo "Deploying to Minikube..."
+          echo "🚀 Deploying to Minikube..."
 
           # Make sure Docker commands target Minikube's internal daemon
           eval $(minikube -p minikube docker-env)
@@ -114,10 +114,10 @@ pipeline {
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
 
-          echo " Waiting for rollout..."
+          echo "⏳ Waiting for rollout..."
           kubectl rollout status deployment/$APP_NAME --timeout=300s || true
 
-          echo "Deployment stage finished!"
+          echo "✅ Deployment stage finished!"
         '''
       }
     }
@@ -125,30 +125,35 @@ pipeline {
 
   post {
     success {
-      script {
-        echo "Build succeeded, notifying GitHub..."
-        sh """
-          curl -s -X POST \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
-            -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
-        """
-        sh 'kubectl get pods -o wide || true'
+      withCredentials([string(credentialsId: 'jenkin', variable: 'GITHUB_TOKEN')]) {
+        script {
+          echo "✅ Build succeeded, notifying GitHub..."
+          sh """
+            curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+              -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
+          """
+          sh 'kubectl get pods -o wide || true'
+        }
       }
     }
 
     failure {
-      script {
-        echo "❌ Build failed, notifying GitHub..."
-        sh """
-          curl -s -X POST \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
-            -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
-        """
+      withCredentials([string(credentialsId: 'jenkin', variable: 'GITHUB_TOKEN')]) {
+        script {
+          echo "❌ Build failed, notifying GitHub..."
+          sh """
+            curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+              -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
+          """
+        }
       }
     }
   }
 }
+
