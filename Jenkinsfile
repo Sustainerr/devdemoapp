@@ -5,11 +5,12 @@ pipeline {
   tools { maven 'Maven3' }
 
   environment {
-    APP_NAME = 'demoapp'
-    PORT     = '8081'
-    GITHUB_REPO = 'Sustainerr/devdemoapp'
-    GITHUB_TOKEN = credentials('jenkin')
+    APP_NAME     = 'demoapp'
+    PORT         = '8081'
+    GITHUB_REPO  = 'Sustainerr/devdemoapp'
+    GITHUB_TOKEN = credentials('git')
     SONARQUBE = credentials('sonar')
+    COMMIT_SHA   = ''
   }
 
   stages {
@@ -17,18 +18,17 @@ pipeline {
       steps {
         checkout scm
         echo "Building branch: ${env.BRANCH_NAME}"
-      }
-    }
 
-    stage('Set GitHub Status - Pending') {
-      steps {
         script {
-          def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+          // Save commit SHA for post actions
+          env.COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+
+          // Notify GitHub: build started
           sh """
             curl -s -X POST \
               -H "Authorization: token ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${GITHUB_REPO}/statuses/${sha} \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
               -d '{"state":"pending","context":"jenkins/build","description":"Build started"}'
           """
         }
@@ -42,16 +42,17 @@ pipeline {
     }
 
     stage('Test') {
-      steps { 
-        sh 'mvn -B test' 
+      steps {
+        sh 'mvn -B test'
       }
-      post { 
-        always { 
-          junit 'target/surefire-reports/*.xml' 
-        } 
+      post {
+        always {
+          junit 'target/surefire-reports/*.xml'
+        }
       }
     }
 
+    // 🔹 ADDED: SonarQube Analysis Stage
     stage('SAST - SonarQube Analysis') {
       steps {
         withSonarQubeEnv('SonarQube') {
@@ -65,6 +66,7 @@ pipeline {
       }
     }
 
+    // 🔹 ADDED: Quality Gate Check
     stage('Quality Gate') {
       steps {
         script {
@@ -88,60 +90,69 @@ pipeline {
 
     stage('Docker Build') {
       when { branch 'main' }
-      steps { 
-        sh 'docker build -t $APP_NAME:latest .' 
+      steps {
+        sh 'docker build -t $APP_NAME:latest .'
       }
     }
 
-    stage('Docker Run') {
+    stage('Deploy to Minikube') {
       when { branch 'main' }
       steps {
-        sh 'docker rm -f $APP_NAME || true'
-        sh 'docker run -d --name $APP_NAME -p $PORT:$PORT $APP_NAME:latest'
+        sh '''
+          echo "Deploying to Minikube..."
+
+          # Make sure Docker commands target Minikube's internal daemon
+          eval $(minikube -p minikube docker-env)
+
+          # Build image directly inside Minikube Docker
+          docker build -t $APP_NAME:latest .
+
+          # Optionally load image cache (useful for remote Jenkins)
+          minikube image load $APP_NAME:latest
+
+          # Apply manifests
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+
+          echo " Waiting for rollout..."
+          kubectl rollout status deployment/$APP_NAME --timeout=300s || true
+
+          echo "Deployment stage finished!"
+        '''
       }
     }
   }
 
   post {
-    always {
+    success {
       script {
-        // Only run if we have a workspace context
-        if (currentBuild.rawBuild.getExecutor().getCurrentWorkspace() != null) {
-          sh 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}" || true'
+        node {
+          echo "Build succeeded, notifying GitHub..."
+          sh """
+            curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+              -d '{"state":"success","context":"jenkins/build","description":"Build passed"}'
+          """
+          sh 'kubectl get pods -o wide || true'
         }
       }
     }
-    success {
-      script {
-        updateGitHubStatus('success', 'Build passed')
-      }
-    }
+
     failure {
       script {
-        updateGitHubStatus('failure', 'Build failed')
+        node {
+          echo "❌ Build failed, notifying GitHub..."
+          sh """
+            curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${GITHUB_REPO}/statuses/${env.COMMIT_SHA} \
+              -d '{"state":"failure","context":"jenkins/build","description":"Build failed"}'
+          """
+        }
       }
     }
-    aborted {
-      script {
-        updateGitHubStatus('error', 'Build aborted')
-      }
-    }
-  }
-}
-
-// Define function to update GitHub status
-def updateGitHubStatus(String state, String description) {
-  try {
-    // Get the SHA in a way that doesn't require workspace
-    def sha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
-    sh """
-      curl -s -X POST \
-        -H "Authorization: token ${env.GITHUB_TOKEN}" \
-        -H "Accept: application/vnd.github+json" \
-        https://api.github.com/repos/${env.GITHUB_REPO}/statuses/${sha} \
-        -d '{"state":"${state}","context":"jenkins/build","description":"${description}"}'
-    """
-  } catch (Exception e) {
-    echo "Failed to update GitHub status: ${e.message}"
   }
 }
