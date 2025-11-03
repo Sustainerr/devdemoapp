@@ -8,7 +8,8 @@ pipeline {
     APP_NAME = 'demoapp'
     PORT     = '8081'
     GITHUB_REPO = 'Sustainerr/devdemoapp'      // owner/repo
-    GITHUB_TOKEN = credentials('jenkin')          // your GitHub token credential
+    GITHUB_TOKEN = credentials('jenkin')       // your GitHub token credential
+    SONARQUBE = credentials('sonar')           // your SonarQube token credential (ID = sonar)
   }
 
   stages {
@@ -40,6 +41,34 @@ pipeline {
     stage('Test') {
       steps { sh 'mvn -B test' }
       post { always { junit 'target/surefire-reports/*.xml' } }
+    }
+
+    // 🔹 NEW: SonarQube Static Analysis Stage
+    stage('SAST - SonarQube Analysis') {
+      steps {
+        withSonarQubeEnv('SonarQube') {
+          sh '''
+            mvn clean verify sonar:sonar \
+              -Dsonar.projectKey=devdemoapp \
+              -Dsonar.host.url=http://localhost:9000 \
+              -Dsonar.login=$SONARQUBE
+          '''
+        }
+      }
+    }
+
+    // 🔹 NEW: Optional Quality Gate Stage
+    stage('Quality Gate') {
+      steps {
+        script {
+          timeout(time: 3, unit: 'MINUTES') {
+            def qg = waitForQualityGate()
+            if (qg.status != 'OK') {
+              error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
+            }
+          }
+        }
+      }
     }
 
     stage('Package') {
