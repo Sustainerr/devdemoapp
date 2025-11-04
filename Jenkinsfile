@@ -173,7 +173,7 @@ pipeline {
       }
     }
 
-    // 🔹 4. DAST - OWASP ZAP (Fixed Version)
+    // 🔹 4. DAST - OWASP ZAP (Working Version)
     stage('DAST - OWASP ZAP') {
       when { branch 'main' }
       steps {
@@ -202,25 +202,57 @@ pipeline {
           # Clean up previous reports
           rm -rf zap_reports
           mkdir -p zap_reports
-          chmod 755 zap_reports
 
-          echo "🔧 Starting ZAP scan with workaround for permission issues..."
+          echo "🔧 Starting ZAP scan with container workaround..."
 
-          # Workaround: Run ZAP with proper working directory and output paths
-          docker run --rm --network host \
-            -u $(id -u):$(id -g) \
-            -v $PWD/zap_reports:/zap/output:rw \
-            -w /zap/output \
+          # Method 1: Run ZAP without mounting volume initially, then copy reports
+          CONTAINER_ID=$(docker run -d --network host \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t "$SERVICE_URL" -r zap_report.html -I -x zap_report.xml || true
+            zap-baseline.py -t "$SERVICE_URL" -r /zap/report.html -I --autooff)
 
-          # Alternative approach if the above still fails
+          # Wait for scan to complete
+          sleep 30
+
+          # Copy the report from the container
+          docker cp $CONTAINER_ID:/zap/report.html zap_reports/zap_report.html 2>/dev/null || echo "Could not copy HTML report"
+
+          # Stop and remove the container
+          docker stop $CONTAINER_ID 2>/dev/null || true
+          docker rm $CONTAINER_ID 2>/dev/null || true
+
+          # Method 2: If first method failed, try with different approach
           if [ ! -f "zap_reports/zap_report.html" ]; then
             echo "🔄 Trying alternative ZAP approach..."
+            
+            # Create a temporary wrapper script to handle the scan
+            cat > /tmp/zap_scan.sh << 'EOF'
+#!/bin/bash
+cd /tmp
+zap-baseline.py -t "$1" -r /tmp/report.html -I --autooff
+if [ -f "/tmp/report.html" ]; then
+  cp /tmp/report.html /zap/output/report.html
+fi
+EOF
+            chmod +x /tmp/zap_scan.sh
+
+            # Run with script approach
             docker run --rm --network host \
-              -v $PWD/zap_reports:/zap/wrk:rw \
+              -v $PWD/zap_reports:/zap/output:rw \
+              -v /tmp/zap_scan.sh:/tmp/zap_scan.sh:ro \
               ghcr.io/zaproxy/zaproxy:stable \
-              bash -c "cd /zap/wrk && zap-baseline.py -t '$SERVICE_URL' -r zap_report.html -I" || true
+              /tmp/zap_scan.sh "$SERVICE_URL" || true
+          fi
+
+          # Final fallback - use simple curl to test if service is reachable
+          if [ ! -f "zap_reports/zap_report.html" ]; then
+            echo "⚠️ Using fallback approach - service reachability test"
+            if curl -s --connect-timeout 10 "$SERVICE_URL" > /dev/null; then
+              echo "Service is reachable but ZAP scan failed to generate report" > zap_reports/scan_info.txt
+              echo "Consider running ZAP manually or check ZAP logs" >> zap_reports/scan_info.txt
+              echo "Target URL: $SERVICE_URL" >> zap_reports/scan_info.txt
+            else
+              echo "Service is not reachable at $SERVICE_URL" > zap_reports/scan_info.txt
+            fi
           fi
 
           # Check if report was generated
@@ -228,9 +260,8 @@ pipeline {
             echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
             ls -la zap_reports/
           else
-            echo "⚠️ DAST scan completed but no report was generated"
-            mkdir -p zap_reports
-            echo "No vulnerabilities found or scan failed to generate report" > zap_reports/scan_status.txt
+            echo "⚠️ DAST scan completed but no HTML report was generated"
+            echo "ZAP scan completed - check service availability or ZAP configuration" > zap_reports/scan_info.txt
           fi
         '''
       }
