@@ -200,8 +200,10 @@ pipeline {
           echo "Target URL: $SERVICE_URL"
           mkdir -p zap_reports
 
-          docker run --rm -v $PWD/zap_reports:/zap/reports owasp/zap2docker-stable \
-            zap-baseline.py -t "$SERVICE_URL" -r /zap/reports/zap_report.html || true
+          docker run --rm -v $PWD/zap_reports:/zap/reports \
+  ghcr.io/zaproxy/zaproxy:stable \
+  zap-baseline.py -t "$SERVICE_URL" -r /zap/reports/zap_report.html -I || true
+
 
           echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
         '''
