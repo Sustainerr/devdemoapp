@@ -17,10 +17,8 @@ pipeline {
         echo "Building branch: ${env.BRANCH_NAME}"
 
         script {
-          // Get the commit SHA for GitHub status updates
           def COMMIT_SHA = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
 
-          // Notify GitHub that build started
           withCredentials([string(credentialsId: 'git', variable: 'GITHUB_TOKEN')]) {
             sh """
               curl -s -X POST \
@@ -31,13 +29,11 @@ pipeline {
             """
           }
 
-          // Save commit SHA for later stages
           writeFile file: 'commit.txt', text: COMMIT_SHA
         }
       }
     }
 
-    // 🔹 1. Secrets Scan (Gitleaks)
     stage('Secrets Scan - Gitleaks') {
       steps {
         sh '''
@@ -98,7 +94,6 @@ pipeline {
       }
     }
 
-    // 🔹 2. SCA (Dependency Scan) - Trivy filesystem
     stage('SCA - Dependency Scan') {
       steps {
         sh '''
@@ -129,7 +124,6 @@ pipeline {
       }
     }
 
-    // 🔹 3. Docker Image Scan - Trivy image
     stage('Docker Image Scan - Trivy') {
       when { branch 'main' }
       steps {
@@ -152,16 +146,12 @@ pipeline {
         sh '''
           echo "🚀 Deploying to Minikube..."
 
-          # Make sure Docker commands target Minikube's internal daemon
           eval $(minikube -p minikube docker-env)
 
-          # Build image directly inside Minikube Docker
           docker build -t $APP_NAME:latest .
 
-          # Optionally load image cache (useful for remote Jenkins)
           minikube image load $APP_NAME:latest
 
-          # Apply manifests
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
 
@@ -173,14 +163,13 @@ pipeline {
       }
     }
 
-    // 🔹 4. DAST - OWASP ZAP (Working Version)
+    // 🔹 4. DAST - OWASP ZAP
     stage('DAST - OWASP ZAP') {
       when { branch 'main' }
       steps {
         sh '''
           echo "🧪 Running OWASP ZAP DAST scan..."
 
-          # Return to host Docker
           eval $(minikube -p minikube docker-env -u) || true
 
           SERVICE_URL=$(minikube service $APP_NAME --url 2>/dev/null || true)
@@ -198,76 +187,21 @@ pipeline {
           fi
 
           echo "Target URL: $SERVICE_URL"
-          
-          # Clean up previous reports
-          rm -rf zap_reports
+
           mkdir -p zap_reports
+          chmod 777 zap_reports
 
-          echo "🔧 Starting ZAP scan with container workaround..."
-
-          # Method 1: Run ZAP without mounting volume initially, then copy reports
-          CONTAINER_ID=$(docker run -d --network host \
+          docker run --rm --network host \
+            -v $PWD/zap_reports:/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t "$SERVICE_URL" -r /zap/report.html -I --autooff)
+            zap-baseline.py -t "$SERVICE_URL" -r zap_report.html -I || true
 
-          # Wait for scan to complete
-          sleep 30
-
-          # Copy the report from the container
-          docker cp $CONTAINER_ID:/zap/report.html zap_reports/zap_report.html 2>/dev/null || echo "Could not copy HTML report"
-
-          # Stop and remove the container
-          docker stop $CONTAINER_ID 2>/dev/null || true
-          docker rm $CONTAINER_ID 2>/dev/null || true
-
-          # Method 2: If first method failed, try with different approach
-          if [ ! -f "zap_reports/zap_report.html" ]; then
-            echo "🔄 Trying alternative ZAP approach..."
-            
-            # Create a temporary wrapper script to handle the scan
-            cat > /tmp/zap_scan.sh << 'EOF'
-#!/bin/bash
-cd /tmp
-zap-baseline.py -t "$1" -r /tmp/report.html -I --autooff
-if [ -f "/tmp/report.html" ]; then
-  cp /tmp/report.html /zap/output/report.html
-fi
-EOF
-            chmod +x /tmp/zap_scan.sh
-
-            # Run with script approach
-            docker run --rm --network host \
-              -v $PWD/zap_reports:/zap/output:rw \
-              -v /tmp/zap_scan.sh:/tmp/zap_scan.sh:ro \
-              ghcr.io/zaproxy/zaproxy:stable \
-              /tmp/zap_scan.sh "$SERVICE_URL" || true
-          fi
-
-          # Final fallback - use simple curl to test if service is reachable
-          if [ ! -f "zap_reports/zap_report.html" ]; then
-            echo "⚠️ Using fallback approach - service reachability test"
-            if curl -s --connect-timeout 10 "$SERVICE_URL" > /dev/null; then
-              echo "Service is reachable but ZAP scan failed to generate report" > zap_reports/scan_info.txt
-              echo "Consider running ZAP manually or check ZAP logs" >> zap_reports/scan_info.txt
-              echo "Target URL: $SERVICE_URL" >> zap_reports/scan_info.txt
-            else
-              echo "Service is not reachable at $SERVICE_URL" > zap_reports/scan_info.txt
-            fi
-          fi
-
-          # Check if report was generated
-          if [ -f "zap_reports/zap_report.html" ]; then
-            echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
-            ls -la zap_reports/
-          else
-            echo "⚠️ DAST scan completed but no HTML report was generated"
-            echo "ZAP scan completed - check service availability or ZAP configuration" > zap_reports/scan_info.txt
-          fi
+          echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
         '''
       }
       post {
         always {
-          archiveArtifacts artifacts: 'zap_reports/*', allowEmptyArchive: true
+          archiveArtifacts artifacts: 'zap_reports/*.html', allowEmptyArchive: true
         }
       }
     }
@@ -311,3 +245,4 @@ EOF
     }
   }
 }
+
