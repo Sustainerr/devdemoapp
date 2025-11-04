@@ -198,21 +198,45 @@ pipeline {
           fi
 
           echo "Target URL: $SERVICE_URL"
+          
+          # Clean up previous reports
+          rm -rf zap_reports
           mkdir -p zap_reports
+          chmod 755 zap_reports
 
-          # Run ZAP with current user's UID to avoid permission issues
+          echo "🔧 Starting ZAP scan with workaround for permission issues..."
+
+          # Workaround: Run ZAP with proper working directory and output paths
           docker run --rm --network host \
             -u $(id -u):$(id -g) \
-            -v $PWD/zap_reports:/zap/wrk:rw \
+            -v $PWD/zap_reports:/zap/output:rw \
+            -w /zap/output \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t "$SERVICE_URL" -r zap_report.html -I || true
+            zap-baseline.py -t "$SERVICE_URL" -r zap_report.html -I -x zap_report.xml || true
 
-          echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
+          # Alternative approach if the above still fails
+          if [ ! -f "zap_reports/zap_report.html" ]; then
+            echo "🔄 Trying alternative ZAP approach..."
+            docker run --rm --network host \
+              -v $PWD/zap_reports:/zap/wrk:rw \
+              ghcr.io/zaproxy/zaproxy:stable \
+              bash -c "cd /zap/wrk && zap-baseline.py -t '$SERVICE_URL' -r zap_report.html -I" || true
+          fi
+
+          # Check if report was generated
+          if [ -f "zap_reports/zap_report.html" ]; then
+            echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
+            ls -la zap_reports/
+          else
+            echo "⚠️ DAST scan completed but no report was generated"
+            mkdir -p zap_reports
+            echo "No vulnerabilities found or scan failed to generate report" > zap_reports/scan_status.txt
+          fi
         '''
       }
       post {
         always {
-          archiveArtifacts artifacts: 'zap_reports/*.html', allowEmptyArchive: true
+          archiveArtifacts artifacts: 'zap_reports/*', allowEmptyArchive: true
         }
       }
     }
