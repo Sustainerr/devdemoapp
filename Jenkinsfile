@@ -37,6 +37,22 @@ pipeline {
       }
     }
 
+    // 🔹 1. Secrets Scan (Gitleaks)
+    stage('Secrets Scan - Gitleaks') {
+      steps {
+        sh '''
+          echo "🔐 Running Gitleaks for secrets scanning..."
+          gitleaks detect --source . --no-git --report-path gitleaks-report.json || true
+          echo "✅ Secrets scan complete (report saved: gitleaks-report.json)"
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true
+        }
+      }
+    }
+
     stage('Compile') {
       steps {
         sh 'mvn -B -Dspotbugs.skip=true -Ddependency-check.skip=true clean compile'
@@ -82,6 +98,22 @@ pipeline {
       }
     }
 
+    // 🔹 2. SCA (Dependency Scan) - Trivy filesystem
+    stage('SCA - Dependency Scan') {
+      steps {
+        sh '''
+          echo "📦 Running Trivy dependency scan..."
+          trivy fs --exit-code 0 --severity HIGH,CRITICAL --format json -o trivy-fs-report.json .
+          echo "✅ Dependency scan complete (report saved: trivy-fs-report.json)"
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'trivy-fs-report.json', allowEmptyArchive: true
+        }
+      }
+    }
+
     stage('Package') {
       when { branch 'main' }
       steps {
@@ -94,6 +126,23 @@ pipeline {
       when { branch 'main' }
       steps {
         sh 'docker build -t $APP_NAME:latest .'
+      }
+    }
+
+    // 🔹 3. Docker Image Scan - Trivy image
+    stage('Docker Image Scan - Trivy') {
+      when { branch 'main' }
+      steps {
+        sh '''
+          echo "🐳 Scanning Docker image with Trivy..."
+          trivy image --exit-code 0 --severity HIGH,CRITICAL --format json -o trivy-image-report.json $APP_NAME:latest
+          echo "✅ Docker image scan complete (report saved: trivy-image-report.json)"
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'trivy-image-report.json', allowEmptyArchive: true
+        }
       }
     }
 
@@ -121,6 +170,46 @@ pipeline {
 
           echo "✅ Deployment stage finished!"
         '''
+      }
+    }
+
+    // 🔹 4. DAST - OWASP ZAP
+    stage('DAST - OWASP ZAP') {
+      when { branch 'main' }
+      steps {
+        sh '''
+          echo "🧪 Running OWASP ZAP DAST scan..."
+
+          # Return to host Docker
+          eval $(minikube -p minikube docker-env -u) || true
+
+          SERVICE_URL=$(minikube service $APP_NAME --url 2>/dev/null || true)
+          if [ -z "$SERVICE_URL" ]; then
+            echo "⚠️ Could not get service URL, trying NodePort fallback..."
+            NODEPORT=$(kubectl get svc $APP_NAME -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)
+            if [ -n "$NODEPORT" ]; then
+              SERVICE_URL="http://$(minikube ip):${NODEPORT}"
+            fi
+          fi
+
+          if [ -z "$SERVICE_URL" ]; then
+            echo "⚠️ No service URL found. Skipping DAST scan."
+            exit 0
+          fi
+
+          echo "Target URL: $SERVICE_URL"
+          mkdir -p zap_reports
+
+          docker run --rm -v $PWD/zap_reports:/zap/reports owasp/zap2docker-stable \
+            zap-baseline.py -t "$SERVICE_URL" -r /zap/reports/zap_report.html || true
+
+          echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'zap_reports/*.html', allowEmptyArchive: true
+        }
       }
     }
   }
@@ -163,3 +252,4 @@ pipeline {
     }
   }
 }
+
