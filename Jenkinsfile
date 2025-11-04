@@ -173,7 +173,7 @@ pipeline {
       }
     }
 
-    // 🔹 4. DAST - OWASP ZAP
+    // 🔹 4. DAST - OWASP ZAP (Fixed Version)
     stage('DAST - OWASP ZAP') {
       when { branch 'main' }
       steps {
@@ -200,9 +200,12 @@ pipeline {
           echo "Target URL: $SERVICE_URL"
           mkdir -p zap_reports
 
-	docker run --rm --network host -v $PWD/zap_reports:/zap/wrk \
-	  ghcr.io/zaproxy/zaproxy:stable \
-	  zap-baseline.py -t "$SERVICE_URL" -r zap_report.html -I || true
+          # Run ZAP with current user's UID to avoid permission issues
+          docker run --rm --network host \
+            -u $(id -u):$(id -g) \
+            -v $PWD/zap_reports:/zap/wrk:rw \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "$SERVICE_URL" -r zap_report.html -I || true
 
           echo "✅ DAST scan complete (report saved: zap_reports/zap_report.html)"
         '''
@@ -253,4 +256,3 @@ pipeline {
     }
   }
 }
-
